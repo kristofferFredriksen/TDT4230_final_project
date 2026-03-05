@@ -2,7 +2,7 @@
 #include <iostream>
 
 // Original source: https://raw.githubusercontent.com/lvandeve/lodepng/master/examples/example_decode.cpp
-PNGImage loadPNGFile(std::string fileName)
+PNGImage loadPNGFile(std::string fileName, bool flipVertically)
 {
 	std::vector<unsigned char> png;
 	std::vector<unsigned char> pixels; //the raw pixels
@@ -23,13 +23,23 @@ PNGImage loadPNGFile(std::string fileName)
 
 	// You're welcome :)
 
-	unsigned int widthBytes = 4 * width;
-
-	for(unsigned int row = 0; row < (height / 2); row++) {
-		for(unsigned int col = 0; col < widthBytes; col++) {
-			std::swap(pixels[row * widthBytes + col], pixels[(height - 1 - row) * widthBytes + col]);
+	if (flipVertically) {
+		unsigned int widthBytes = 4 * width;
+		for (unsigned int row = 0; row < (height / 2); row++) {
+			for (unsigned int col = 0; col < widthBytes; col++) {
+				std::swap(pixels[row * widthBytes + col],
+						pixels[(height - 1 - row) * widthBytes + col]);
+			}
 		}
 	}
+
+	unsigned int widthBytes = 4 * width;
+
+	// for(unsigned int row = 0; row < (height / 2); row++) {
+	// 	for(unsigned int col = 0; col < widthBytes; col++) {
+	// 		std::swap(pixels[row * widthBytes + col], pixels[(height - 1 - row) * widthBytes + col]);
+	// 	}
+	// }
 
 	PNGImage image;
 	image.width = width;
