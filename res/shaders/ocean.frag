@@ -197,15 +197,17 @@ void main()
     float troughMask = smoothstep(-0.90, -0.10, -vWorldPos.y);
     float slopeMask = clamp(1.0 - N.y, 0.0, 1.0);
     float facingLight = pow(max(dot(normalize(N.xz + vec2(1e-4)), normalize(L.xz)), 0.0), 1.8);
+    float crestFoamNoise = valueNoise(xz * 0.095 + vec2(uTime * 0.05, -uTime * 0.03));
+    float crestFoam = smoothstep(0.52, 0.86, vCrest) * smoothstep(0.48, 0.85, crestFoamNoise);
     float microFoam = smoothstep(0.18, 0.55, slopeMask) *
                       smoothstep(0.22, 0.88, valueNoise(xz * 0.18 + vec2(uTime * 0.08, -uTime * 0.05)));
     breakFoam = clamp(breakFoam + 0.14 * microFoam * (0.35 + 0.65 * facingLight), 0.0, 1.0);
 
     vec3 waterColor = mix(bodyColor, deepColor, depthFactor);
     waterColor = mix(waterColor, troughColor, 0.35 * troughMask + 0.25 * slopeMask);
-    waterColor = mix(waterColor, crestColor, 0.45 * crestMask + 0.18 * facingLight * slopeMask);
+    waterColor = mix(waterColor, crestColor, 0.62 * crestMask + 0.24 * facingLight * slopeMask);
 
-    float subsurface = (0.14 + 0.32 * crestMask + 0.24 * facingLight) * (1.0 - depthFactor * 0.50);
+    float subsurface = (0.18 + 0.44 * crestMask + 0.30 * facingLight) * (1.0 - depthFactor * 0.48);
     vec3 diffuse = waterColor * (0.08 + 0.24 * NdotL) + uSunColor * vec3(0.030, 0.090, 0.075) * subsurface * uSunIntensity;
 
     // Fresnel reflectance: water F0 is low (~0.02) but rises strongly at grazing angles
@@ -233,6 +235,7 @@ void main()
     float Gs = geometrySmith(NdotV, NdotL, roughness);
     vec3 specular = (D * Gs * FH) / max(4.0 * NdotV * NdotL, 1e-4);
     specular *= NdotL * (1.45 + 1.25 * uSunIntensity) * uSunColor;
+    vec3 crestHighlight = uSunColor * (0.18 + 0.28 * uSunIntensity) * pow(max(dot(R, L), 0.0), 18.0) * crestMask;
 
     float sunHorizon = pow(max(dot(normalize(vec3(V.x, 0.0, V.z) + vec3(1e-4)), normalize(vec3(L.x, 0.0, L.z))), 0.0), 3.0);
     vec3 horizonTint = mix(vec3(0.030, 0.080, 0.095), uSunColor * vec3(0.22, 0.16, 0.08), sunHorizon * 0.65) * pow(1.0 - NdotV, 2.4);
@@ -244,18 +247,19 @@ void main()
     // - Reflection dominates at grazing angles via Fresnel
     // - Diffuse provides body color
     // - Specular adds sun glints
-    vec3 color = diffuse * (1.0 - F) + reflection + specular + horizonTint;
+    vec3 color = diffuse * (1.0 - F) + reflection + specular + crestHighlight + horizonTint;
     color = mix(color, breakFoamColor, breakFoam * 0.48);
+    color = mix(color, breakFoamColor, crestFoam * 0.14);
 
     vec3 viewDir = normalize(vWorldPos - uCameraPos);
     vec3 fogDir = normalize(vec3(viewDir.x, max(viewDir.y, -0.08), viewDir.z));
     vec3 fogColor = textureLod(uSkybox, fogDir, 1.5).rgb;
     vec2 edgeRatio = abs(vWorldPos.xz) / max(uOceanHalfExtent, vec2(1e-3));
     float meshEdge = max(edgeRatio.x, edgeRatio.y);
-    float edgeFog = smoothstep(0.84, 0.985, meshEdge);
-    float horizonMask = pow(clamp(1.0 - abs(viewDir.y), 0.0, 1.0), 3.0);
-    float horizonFog = edgeFog * mix(0.70, 1.0, horizonMask);
-    color = mix(color, fogColor, clamp(horizonFog, 0.0, 0.88));
+    float edgeFog = smoothstep(0.78, 0.975, meshEdge);
+    float horizonMask = pow(clamp(1.0 - abs(viewDir.y), 0.0, 1.0), 2.4);
+    float horizonFog = edgeFog * mix(0.82, 1.0, horizonMask);
+    color = mix(color, fogColor, clamp(horizonFog, 0.0, 0.95));
     float sunGlare = pow(max(dot(R, L), 0.0), mix(80.0, 320.0, roughness)) * 1.8;
     color += uSunColor * sunGlare * uSunIntensity;
     color = tonemapACES(color);

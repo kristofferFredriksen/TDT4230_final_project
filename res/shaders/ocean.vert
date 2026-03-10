@@ -163,7 +163,7 @@ void main() {
     vec3 analyticNormal = normalize(cross(dPdz, dPdx));
     vNormal = analyticNormal;
     vBreak = clamp(breakAccum / max(float(count) * 0.55, 1.0), 0.0, 1.0);
-    vCrest = smoothstep(0.88, 0.985, 1.0 - analyticNormal.y) * smoothstep(0.10, 0.70, totDisp.y);
+    vCrest = smoothstep(0.78, 0.965, 1.0 - analyticNormal.y) * smoothstep(0.02, 0.58, totDisp.y);
     vBreakShape = clamp(breakShapeAccum / max(float(count) * 0.34, 1.0), 0.0, 1.0);
 
     // Project to clip space
