@@ -22,6 +22,8 @@
 static Gloom::Shader* shader = nullptr;
 static unsigned int oceanVAO = 0;
 static int oceanIndexCount = 0;
+static float gOceanSize = 3000.0f;
+static int gResolution = 4096; // or 2048 for more detail (beware perf!)
 
 static float timeSeconds = 0.0f;
 
@@ -75,7 +77,7 @@ static constexpr int SWELL_WAVES = 4;
 static constexpr int MID_WAVES = 8;
 
 static int gWaveCount = MAX_WAVES; // or 8
-static float gAmplitudeScale  = 1.0f;
+static float gAmplitudeScale  = 0.513158f;
 static float gSteepnessScale  = 1.0f;
 static float gWindAngleRad    = 0.0f;  // rotates all directions
 static int   gDebugMode       = 0;     // 0 shaded, 1 normals (optional)
@@ -191,7 +193,7 @@ void initOcean(GLFWwindow* window, CommandLineOptions options)
     shader->activate();
 
     // Grid mesh
-    Mesh grid = makeGrid(/*n=*/2048, /*size=*/300.0f);
+    Mesh grid = makeGrid(/*n=*/gResolution, /*size=*/gOceanSize);
     oceanVAO = generateBuffer(grid);
     oceanIndexCount = int(grid.indices.size());
 
@@ -294,6 +296,7 @@ void updateOcean(GLFWwindow* window)
     glUniform1f(5, gAmplitudeScale);
     glUniform1f(6, gSteepnessScale);
     glUniform1f(7, gWindAngleRad);
+    glUniform2f(401, 0.5f * gOceanSize, 0.5f * gOceanSize);
 
     // Pack into arrays
     glm::vec4 dirAmp[MAX_WAVES];

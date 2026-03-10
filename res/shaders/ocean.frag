@@ -10,6 +10,7 @@ layout(location=2) uniform float uTime;
 layout(location=3) uniform vec3 uCameraPos;
 layout(location=7) uniform float uWindAngleRad;
 layout(location=400) uniform int uDebugMode;
+layout(location=401) uniform vec2 uOceanHalfExtent;
 
 out vec4 fragColor;
 
@@ -25,6 +26,12 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
 {
     // Schlick approximation
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+float exponentialFog(float distanceToCamera, float density)
+{
+    float fog = 1.0 - exp(-(distanceToCamera * density) * (distanceToCamera * density));
+    return clamp(fog, 0.0, 1.0);
 }
 
 float distributionGGX(float NdotH, float roughness)
@@ -140,7 +147,7 @@ void main()
     vec3 V = normalize(uCameraPos - vWorldPos);
 
     // Directional sun light (pointing *from* surface *towards* the sun)
-    vec3 L = normalize(vec3(0.3, 1.0, 0.2));
+    vec3 L = normalize(vec3(-0.36, 0.52, 0.78));
     vec3 H = normalize(L + V);
 
     vec2 detailSlope = compositeDetailSlope(xz, uTime, uWindAngleRad);
@@ -186,8 +193,8 @@ void main()
     waterColor = mix(waterColor, troughColor, 0.35 * troughMask + 0.25 * slopeMask);
     waterColor = mix(waterColor, crestColor, 0.45 * crestMask + 0.18 * facingLight * slopeMask);
 
-    float subsurface = (0.10 + 0.22 * crestMask + 0.16 * facingLight) * (1.0 - depthFactor * 0.55);
-    vec3 diffuse = waterColor * (0.05 + 0.14 * NdotL) + vec3(0.020, 0.065, 0.055) * subsurface;
+    float subsurface = (0.14 + 0.32 * crestMask + 0.24 * facingLight) * (1.0 - depthFactor * 0.50);
+    vec3 diffuse = waterColor * (0.08 + 0.24 * NdotL) + vec3(0.030, 0.090, 0.075) * subsurface;
 
     // Fresnel reflectance: water F0 is low (~0.02) but rises strongly at grazing angles
     vec3 F0 = vec3(0.02);
@@ -206,14 +213,14 @@ void main()
         return;
     }
 
-    vec3 reflection = env * (F * 1.3);
+    vec3 reflection = env * (F * 1.45);
 
     float NdotH = max(dot(N, H), 0.0);
     vec3 FH = fresnelSchlick(max(dot(H, V), 0.0), F0);
     float D = distributionGGX(NdotH, roughness);
     float Gs = geometrySmith(NdotV, NdotL, roughness);
     vec3 specular = (D * Gs * FH) / max(4.0 * NdotV * NdotL, 1e-4);
-    specular *= NdotL * 1.6;
+    specular *= NdotL * 2.35;
 
     vec3 horizonTint = vec3(0.030, 0.080, 0.095) * pow(1.0 - NdotV, 2.4);
     vec3 breakFoamColor = vec3(0.87, 0.90, 0.89);
@@ -226,5 +233,16 @@ void main()
     // - Specular adds sun glints
     vec3 color = diffuse * (1.0 - F) + reflection + specular + horizonTint;
     color = mix(color, breakFoamColor, breakFoam * 0.48);
+
+    vec3 viewDir = normalize(vWorldPos - uCameraPos);
+    vec3 fogDir = normalize(vec3(viewDir.x, max(viewDir.y, -0.08), viewDir.z));
+    vec3 fogColor = textureLod(uSkybox, fogDir, 1.5).rgb;
+    vec2 edgeRatio = abs(vWorldPos.xz) / max(uOceanHalfExtent, vec2(1e-3));
+    float meshEdge = max(edgeRatio.x, edgeRatio.y);
+    float edgeFog = smoothstep(0.84, 0.985, meshEdge);
+    float horizonMask = pow(clamp(1.0 - abs(viewDir.y), 0.0, 1.0), 3.0);
+    float horizonFog = edgeFog * mix(0.70, 1.0, horizonMask);
+    color = mix(color, fogColor, clamp(horizonFog, 0.0, 0.88));
+
     fragColor = vec4(color, 1.0);
 }
