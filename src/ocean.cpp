@@ -78,6 +78,14 @@ static float gSteepnessScale  = 1.0f;
 static float gWindAngleRad    = 0.0f;  // rotates all directions
 static int   gDebugMode       = 0;     // 0 shaded, 1 normals (optional)
 
+static float deepWaterPhaseSpeed(float wavelength)
+{
+    constexpr float g = 9.81f;
+    constexpr float twoPi = 6.28318530718f;
+    float k = twoPi / wavelength;
+    return std::sqrt(g / k);
+}
+
 // --------------------
 // Grid generator (XZ plane)
 // --------------------
@@ -282,23 +290,21 @@ void updateOcean(GLFWwindow* window)
             // Swell waves (hand-tuned)
             dirAmp[i]   = glm::vec4(gWaves[i].directionXZ.x, gWaves[i].directionXZ.y,
                                     gWaves[i].amplitude, gWaves[i].steepness);
-            lenSpeed[i] = glm::vec3(gWaves[i].wavelength, gWaves[i].speed, 0.0f);
+            lenSpeed[i] = glm::vec3(gWaves[i].wavelength, deepWaterPhaseSpeed(gWaves[i].wavelength), 0.0f);
         } else {
-            // Procedural detail waves (ripples)
+            // Procedural bands biased around wind direction.
             float idx = float(i - SWELL_WAVES + 1);
-            float spread = 0.35f;                     // direction spread around wind
-            float angle = gWindAngleRad + spread * (idx - 4.0f);
+            float t = idx / float(MAX_WAVES - SWELL_WAVES);
+            float spread = glm::mix(-0.75f, 0.75f, t);
+            float angle = spread;
 
             glm::vec2 dir = glm::normalize(glm::vec2(std::cos(angle), std::sin(angle)));
 
-            // Shorter wavelengths and smaller amplitudes than swell
-            float wavelength = 30.0f / (0.7f * idx + 1.0f) + 2.0f;   // ~32 .. ~2.7
-            float amplitude  = 0.25f / sqrt(idx);                    // slower decay
-            amplitude = std::max(amplitude, 0.03f);                  // keep some energy
-            float steepness  = 0.18f / sqrt(idx);                    // slower decay, but clamp to avoid instability
-            steepness = std::min(steepness, 0.4f);                                          
-            float speed      = 2.0f + 0.25f * idx;     // simple model
-            // float steepness  = 0.25f / (idx * 1.1f);   // decays with idx
+            // Geometric spacing gives a more natural multi-scale spectrum.
+            float wavelength = glm::mix(28.0f, 4.0f, std::pow(t, 0.85f));
+            float amplitude  = glm::mix(0.22f, 0.035f, std::pow(t, 0.72f));
+            float steepness  = glm::mix(0.16f, 0.05f, t);
+            float speed      = deepWaterPhaseSpeed(wavelength);
 
             dirAmp[i]   = glm::vec4(dir.x, dir.y, amplitude, steepness);
             lenSpeed[i] = glm::vec3(wavelength, speed, 0.0f);
