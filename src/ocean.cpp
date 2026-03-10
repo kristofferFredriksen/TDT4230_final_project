@@ -63,11 +63,11 @@ struct WaveParams {
 };
 
 static std::vector<WaveParams> gWaves = {
-    // Dominant swell set: long wavelengths, narrow directional spread.
-    { glm::normalize(glm::vec2(1.0f,  0.08f)), 1.40f, 52.0f, 0.0f, 0.82f },
-    { glm::normalize(glm::vec2(1.0f, -0.05f)), 1.05f, 41.0f, 0.0f, 0.76f },
-    { glm::normalize(glm::vec2(0.98f, 0.18f)), 0.78f, 30.0f, 0.0f, 0.67f },
-    { glm::normalize(glm::vec2(0.96f,-0.16f)), 0.56f, 23.0f, 0.0f, 0.59f },
+    // Dominant wind-driven swell, with one weaker secondary system to avoid uniformity.
+    { glm::normalize(glm::vec2(1.0f,  0.16f)), 1.60f, 56.0f, 0.0f, 0.80f },
+    { glm::normalize(glm::vec2(0.98f, -0.18f)), 1.20f, 42.0f, 0.0f, 0.73f },
+    { glm::normalize(glm::vec2(0.90f, 0.43f)), 0.86f, 30.0f, 0.0f, 0.63f },
+    { glm::normalize(glm::vec2(-0.30f, 0.95f)), 0.42f, 24.0f, 0.0f, 0.46f },
 };
 
 static constexpr int MAX_WAVES = 24;
@@ -92,6 +92,12 @@ static float waveGroupEnvelope(float time, float frequency, float phase, float s
 {
     float pulse = 0.5f + 0.5f * std::sin(time * frequency + phase);
     return glm::mix(1.0f - strength, 1.0f + strength, pulse);
+}
+
+static float pseudoRandom01(int seed)
+{
+    float x = std::sin(float(seed) * 127.1f + 311.7f) * 43758.5453f;
+    return x - std::floor(x);
 }
 
 // --------------------
@@ -204,7 +210,7 @@ void updateOcean(GLFWwindow* window)
     }
 
     if (keyPressed(window, GLFW_KEY_F2)) {
-        gDebugMode = (gDebugMode + 1) % 4;
+        gDebugMode = (gDebugMode + 1) % 5;
         std::cout << "DebugMode " << gDebugMode << "\n";
     }
 
@@ -296,46 +302,46 @@ void updateOcean(GLFWwindow* window)
     for (int i = 0; i < MAX_WAVES; i++) {
         if (i < SWELL_WAVES && i < (int)gWaves.size()) {
             // Swell waves (hand-tuned)
-            float envelope = waveGroupEnvelope(timeSeconds, 0.11f, 0.9f * float(i), 0.18f);
+            float envelope = waveGroupEnvelope(timeSeconds, 0.11f + 0.015f * float(i), 0.9f * float(i), 0.18f);
+            float phase = glm::two_pi<float>() * pseudoRandom01(17 + i * 13);
             dirAmp[i]   = glm::vec4(gWaves[i].directionXZ.x, gWaves[i].directionXZ.y,
                                     gWaves[i].amplitude * envelope, gWaves[i].steepness);
-            lenSpeed[i] = glm::vec3(gWaves[i].wavelength, deepWaterPhaseSpeed(gWaves[i].wavelength), 0.0f);
+            lenSpeed[i] = glm::vec3(gWaves[i].wavelength, deepWaterPhaseSpeed(gWaves[i].wavelength), phase);
         } else if (i < SWELL_WAVES + MID_WAVES) {
             float idx = float(i - SWELL_WAVES);
             float t = idx / float(std::max(MID_WAVES - 1, 1));
-
-            float spread = glm::mix(-0.22f, 0.22f, t);
-            if ((i & 1) == 1) spread *= 0.55f;
+            float rand = pseudoRandom01(101 + i * 19);
+            float spread = glm::mix(-0.50f, 0.50f, t) + glm::mix(-0.16f, 0.16f, rand);
+            if ((i & 1) == 1) spread += 0.20f * (rand - 0.5f);
             glm::vec2 dir = glm::normalize(glm::vec2(std::cos(spread), std::sin(spread)));
 
-            float wavelength = glm::mix(18.0f, 7.0f, std::pow(t, 0.85f));
-            float amplitude  = glm::mix(0.46f, 0.14f, std::pow(t, 0.72f));
-            float steepness  = glm::mix(0.74f, 0.42f, t);
+            float wavelength = glm::mix(26.0f, 8.0f, std::pow(t, 0.82f)) * glm::mix(0.78f, 1.22f, rand);
+            float amplitude  = glm::mix(0.60f, 0.14f, std::pow(t, 0.70f)) * glm::mix(0.75f, 1.30f, rand);
+            float steepness  = glm::mix(0.76f, 0.30f, t) * glm::mix(0.82f, 1.16f, 1.0f - rand);
             float speed      = deepWaterPhaseSpeed(wavelength);
-            float envelope   = waveGroupEnvelope(timeSeconds, 0.19f + 0.03f * float(i % 3), 0.7f * idx, 0.28f);
+            float envelope   = waveGroupEnvelope(timeSeconds, 0.17f + 0.05f * float(i % 3), 0.7f * idx, 0.22f);
+            float phase      = glm::two_pi<float>() * pseudoRandom01(211 + i * 23);
 
             dirAmp[i]   = glm::vec4(dir.x, dir.y, amplitude * envelope, steepness);
-            lenSpeed[i] = glm::vec3(wavelength, speed, 0.0f);
+            lenSpeed[i] = glm::vec3(wavelength, speed, phase);
         } else {
             float idx = float(i - SWELL_WAVES - MID_WAVES);
             float t = idx / float(std::max(MAX_WAVES - SWELL_WAVES - MID_WAVES - 1, 1));
-            float spread = glm::mix(-0.45f, 0.45f, t);
-
-            // Keep only a couple of crosswind detail waves so the field stays wind-driven.
-            if (i >= MAX_WAVES - 2) {
-                spread = (i == MAX_WAVES - 2) ? 0.95f : -0.95f;
-            }
+            float rand = pseudoRandom01(307 + i * 29);
+            float spread = glm::mix(-0.95f, 0.95f, t) + glm::mix(-0.26f, 0.26f, rand);
+            if (i >= MAX_WAVES - 3) spread += (i == MAX_WAVES - 1 ? 0.95f : -0.70f);
 
             glm::vec2 dir = glm::normalize(glm::vec2(std::cos(spread), std::sin(spread)));
 
-            float wavelength = glm::mix(6.5f, 2.4f, std::pow(t, 0.9f));
-            float amplitude  = glm::mix(0.09f, 0.025f, std::pow(t, 0.75f));
-            float steepness  = glm::mix(0.26f, 0.11f, t);
+            float wavelength = glm::mix(10.5f, 2.6f, std::pow(t, 0.86f)) * glm::mix(0.72f, 1.32f, rand);
+            float amplitude  = glm::mix(0.10f, 0.018f, std::pow(t, 0.74f)) * glm::mix(0.70f, 1.30f, rand);
+            float steepness  = glm::mix(0.30f, 0.09f, t) * glm::mix(0.80f, 1.18f, 1.0f - rand);
             float speed      = deepWaterPhaseSpeed(wavelength);
-            float envelope   = waveGroupEnvelope(timeSeconds, 0.33f + 0.02f * float(i % 4), 0.45f * idx, 0.10f);
+            float envelope   = waveGroupEnvelope(timeSeconds, 0.28f + 0.05f * float(i % 4), 0.45f * idx, 0.12f);
+            float phase      = glm::two_pi<float>() * pseudoRandom01(401 + i * 31);
 
             dirAmp[i]   = glm::vec4(dir.x, dir.y, amplitude * envelope, steepness);
-            lenSpeed[i] = glm::vec3(wavelength, speed, 0.0f);
+            lenSpeed[i] = glm::vec3(wavelength, speed, phase);
         }
     }
 
