@@ -42,11 +42,26 @@ void gerstnerWave(
     float phase = waveNumber * dot(waveDirectionXZ, xz) - frequency * t;
     float cosPhase = cos(phase);
     float sinPhase = sin(phase);
+    float waveBand = clamp((wavelength - 3.0) / 24.0, 0.0, 1.0);
+    float steepnessBoost = mix(0.72, 1.28, pow(waveBand, 0.65));
+    float effectiveSteepness = clamp(steepness * steepnessBoost, 0.0, 1.35);
+
+    // Sharpen larger and mid-scale waves so crests look less sinusoidal.
+    float crestBlend = smoothstep(0.18, 0.82, waveBand);
+    float sharpenedSin = sign(sinPhase) * pow(abs(sinPhase), mix(1.0, 1.65, crestBlend));
+    float verticalProfile = mix(sinPhase, sharpenedSin, crestBlend);
+    float verticalDerivative = cosPhase;
+    if (crestBlend > 0.0) {
+        float absSin = max(abs(sinPhase), 1e-4);
+        float power = mix(1.0, 1.65, crestBlend);
+        float shapedDerivative = power * pow(absSin, power - 1.0) * cosPhase;
+        verticalDerivative = mix(cosPhase, shapedDerivative, crestBlend);
+    }
 
     // Gerstner displacement
-    disp.x += steepness * amplitude * waveDirectionXZ.x * cosPhase;
-    disp.y += amplitude * sinPhase;
-    disp.z += steepness * amplitude * waveDirectionXZ.y * cosPhase;
+    disp.x += effectiveSteepness * amplitude * waveDirectionXZ.x * cosPhase;
+    disp.y += amplitude * verticalProfile;
+    disp.z += effectiveSteepness * amplitude * waveDirectionXZ.y * cosPhase;
 
     // Partial derivatives for normal calculation
     // Phase = k * (Dx*x + Dz*z) - ω*t
@@ -56,14 +71,14 @@ void gerstnerWave(
     float dPhase_dz = waveNumber * waveDirectionXZ.y;
 
     // d/dx of the displaced position components
-    dPdx.x += steepness * amplitude * waveDirectionXZ.x * (-sinPhase) * dPhase_dx;
-    dPdx.y += amplitude * cosPhase * dPhase_dx;
-    dPdx.z += steepness * amplitude * waveDirectionXZ.y * (-sinPhase) * dPhase_dx;
+    dPdx.x += effectiveSteepness * amplitude * waveDirectionXZ.x * (-sinPhase) * dPhase_dx;
+    dPdx.y += amplitude * verticalDerivative * dPhase_dx;
+    dPdx.z += effectiveSteepness * amplitude * waveDirectionXZ.y * (-sinPhase) * dPhase_dx;
 
     // d/dz of the displaced position components
-    dPdz.x += steepness * amplitude * waveDirectionXZ.x * (-sinPhase) * dPhase_dz;
-    dPdz.y += amplitude * cosPhase * dPhase_dz;
-    dPdz.z += steepness * amplitude * waveDirectionXZ.y * (-sinPhase) * dPhase_dz;
+    dPdz.x += effectiveSteepness * amplitude * waveDirectionXZ.x * (-sinPhase) * dPhase_dz;
+    dPdz.y += amplitude * verticalDerivative * dPhase_dz;
+    dPdz.z += effectiveSteepness * amplitude * waveDirectionXZ.y * (-sinPhase) * dPhase_dz;
 }
 
 mat2 rotation2D(float angle) {
