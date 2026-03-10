@@ -81,6 +81,9 @@ static float gAmplitudeScale  = 0.513158f;
 static float gSteepnessScale  = 1.0f;
 static float gWindAngleRad    = 0.0f;  // rotates all directions
 static int   gDebugMode       = 0;     // 0 shaded, 1 normals (optional)
+static glm::vec3 gSunDir      = glm::normalize(glm::vec3(-0.36f, 0.52f, 0.78f));
+static glm::vec3 gSunColor    = glm::vec3(1.0f, 0.93f, 0.82f);
+static float gSunIntensity    = 1.35f;
 
 static float deepWaterPhaseSpeed(float wavelength)
 {
@@ -297,6 +300,9 @@ void updateOcean(GLFWwindow* window)
     glUniform1f(6, gSteepnessScale);
     glUniform1f(7, gWindAngleRad);
     glUniform2f(401, 0.5f * gOceanSize, 0.5f * gOceanSize);
+    glUniform3fv(402, 1, glm::value_ptr(gSunDir));
+    glUniform3fv(403, 1, glm::value_ptr(gSunColor));
+    glUniform1f(404, gSunIntensity);
 
     // Pack into arrays
     glm::vec4 dirAmp[MAX_WAVES];
