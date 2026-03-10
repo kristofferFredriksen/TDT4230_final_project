@@ -10,3 +10,4 @@ const glm::mat4& getOceanProj();
 void initOcean(GLFWwindow* window, CommandLineOptions options);
 void updateOcean(GLFWwindow* window);
 void renderOcean(GLFWwindow* window);
+void renderOceanGui(GLFWwindow* window);

@@ -314,6 +314,8 @@ void runProgram(GLFWwindow* window, CommandLineOptions options)
         glEnable(GL_DEPTH_TEST);
         glBindVertexArray(0);
 
+        renderOceanGui(window);
+
         glfwPollEvents();
         handleKeyboardInput(window);
         glfwSwapBuffers(window);

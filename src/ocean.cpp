@@ -7,12 +7,17 @@
 #include <utilities/glutils.h>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+
+#include <stb_easy_font.h>
 
 #include <vector>
 #include <cmath>
 #include <iostream>
+#include <sstream>
+#include <iomanip>
 
 #include "ocean.hpp"
 
@@ -20,10 +25,13 @@
 // Minimal state
 // --------------------
 static Gloom::Shader* shader = nullptr;
+static Gloom::Shader* guiShader = nullptr;
 static unsigned int oceanVAO = 0;
 static int oceanIndexCount = 0;
 static float gOceanSize = 3000.0f;
 static int gResolution = 4096; // or 2048 for more detail (beware perf!)
+static unsigned int guiVAO = 0;
+static unsigned int guiVBO = 0;
 
 static float timeSeconds = 0.0f;
 
@@ -35,12 +43,67 @@ static float camRadius = 60.0f;
 static bool dragging = false;
 static double lastMouseX = 0.0;
 static double lastMouseY = 0.0;
+static int gActiveSlider = -1;
 
 static bool gWireframe = true;
 static bool gPauseTime = false;
 
 static glm::mat4 gLastView(1.0f);
 static glm::mat4 gLastProj(1.0f);
+
+struct GuiVertex {
+    float x;
+    float y;
+    float r;
+    float g;
+    float b;
+    float a;
+};
+
+static constexpr float GUI_PANEL_X = 20.0f;
+static constexpr float GUI_PANEL_Y = 20.0f;
+static constexpr float GUI_PANEL_W = 280.0f;
+static constexpr float GUI_PANEL_H = 224.0f;
+static constexpr float GUI_SLIDER_X = 132.0f;
+static constexpr float GUI_SLIDER_W = 128.0f;
+static constexpr float GUI_ROW_H = 32.0f;
+static constexpr int GUI_SLIDER_COUNT = 5;
+
+static void appendRect(std::vector<GuiVertex>& vertices, float x, float y, float w, float h, const glm::vec4& color)
+{
+    GuiVertex v0 { x,     y,     color.r, color.g, color.b, color.a };
+    GuiVertex v1 { x + w, y,     color.r, color.g, color.b, color.a };
+    GuiVertex v2 { x + w, y + h, color.r, color.g, color.b, color.a };
+    GuiVertex v3 { x,     y + h, color.r, color.g, color.b, color.a };
+    vertices.push_back(v0); vertices.push_back(v1); vertices.push_back(v2);
+    vertices.push_back(v0); vertices.push_back(v2); vertices.push_back(v3);
+}
+
+static void appendEasyFontText(std::vector<GuiVertex>& vertices, float x, float y, const std::string& text, const glm::vec4& color)
+{
+    char buffer[12000];
+    unsigned char rgba[4] = {
+        static_cast<unsigned char>(glm::clamp(color.r, 0.0f, 1.0f) * 255.0f),
+        static_cast<unsigned char>(glm::clamp(color.g, 0.0f, 1.0f) * 255.0f),
+        static_cast<unsigned char>(glm::clamp(color.b, 0.0f, 1.0f) * 255.0f),
+        static_cast<unsigned char>(glm::clamp(color.a, 0.0f, 1.0f) * 255.0f)
+    };
+    int quadCount = stb_easy_font_print(x, y, const_cast<char*>(text.c_str()), rgba, buffer, sizeof(buffer));
+    for (int i = 0; i < quadCount; ++i) {
+        const unsigned char* base = reinterpret_cast<const unsigned char*>(buffer) + i * 4 * 16;
+        GuiVertex quad[4];
+        for (int j = 0; j < 4; ++j) {
+            const float* pos = reinterpret_cast<const float*>(base + j * 16);
+            const unsigned char* c = base + j * 16 + 12;
+            quad[j] = {
+                pos[0], pos[1],
+                c[0] / 255.0f, c[1] / 255.0f, c[2] / 255.0f, c[3] / 255.0f
+            };
+        }
+        vertices.push_back(quad[0]); vertices.push_back(quad[1]); vertices.push_back(quad[2]);
+        vertices.push_back(quad[0]); vertices.push_back(quad[2]); vertices.push_back(quad[3]);
+    }
+}
 
 // --------------------
 // Input helper
@@ -84,6 +147,91 @@ static int   gDebugMode       = 0;     // 0 shaded, 1 normals (optional)
 static glm::vec3 gSunDir      = glm::normalize(glm::vec3(-0.36f, 0.52f, 0.78f));
 static glm::vec3 gSunColor    = glm::vec3(1.0f, 0.93f, 0.82f);
 static float gSunIntensity    = 1.35f;
+
+static const char* guiSliderLabel(int index)
+{
+    switch (index) {
+        case 0: return "Amplitude";
+        case 1: return "Steepness";
+        case 2: return "Wind Angle";
+        case 3: return "Sun Power";
+        case 4: return "Wave Count";
+        default: return "";
+    }
+}
+
+static bool guiConsumesCursor(double x, double y)
+{
+    return x >= GUI_PANEL_X && x <= GUI_PANEL_X + GUI_PANEL_W &&
+           y >= GUI_PANEL_Y && y <= GUI_PANEL_Y + GUI_PANEL_H;
+}
+
+static int sliderIndexAtCursor(double x, double y)
+{
+    if (!guiConsumesCursor(x, y)) return -1;
+    for (int i = 0; i < GUI_SLIDER_COUNT; ++i) {
+        float rowTop = GUI_PANEL_Y + 36.0f + float(i) * GUI_ROW_H;
+        float rowBottom = rowTop + 20.0f;
+        float sliderLeft = GUI_PANEL_X + GUI_SLIDER_X;
+        float sliderRight = sliderLeft + GUI_SLIDER_W;
+        if (x >= sliderLeft && x <= sliderRight && y >= rowTop && y <= rowBottom) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static float sliderNormalizedFromCursor(double x)
+{
+    float sliderLeft = GUI_PANEL_X + GUI_SLIDER_X;
+    float t = float((x - sliderLeft) / GUI_SLIDER_W);
+    return glm::clamp(t, 0.0f, 1.0f);
+}
+
+static float normalizedFromRange(float value, float minValue, float maxValue)
+{
+    return glm::clamp((value - minValue) / (maxValue - minValue), 0.0f, 1.0f);
+}
+
+static void updateSliderValueFromCursor(int sliderIndex, double x)
+{
+    float t = sliderNormalizedFromCursor(x);
+    switch (sliderIndex) {
+        case 0: gAmplitudeScale = glm::mix(0.1f, 1.6f, t); break;
+        case 1: gSteepnessScale = glm::mix(0.35f, 2.0f, t); break;
+        case 2: gWindAngleRad = glm::mix(-glm::pi<float>(), glm::pi<float>(), t); break;
+        case 3: gSunIntensity = glm::mix(0.4f, 2.6f, t); break;
+        case 4: gWaveCount = glm::clamp(int(std::round(glm::mix(4.0f, float(MAX_WAVES), t))), 1, MAX_WAVES); break;
+        default: break;
+    }
+}
+
+static float currentSliderNormalized(int sliderIndex)
+{
+    switch (sliderIndex) {
+        case 0: return normalizedFromRange(gAmplitudeScale, 0.1f, 1.6f);
+        case 1: return normalizedFromRange(gSteepnessScale, 0.35f, 2.0f);
+        case 2: return normalizedFromRange(gWindAngleRad, -glm::pi<float>(), glm::pi<float>());
+        case 3: return normalizedFromRange(gSunIntensity, 0.4f, 2.6f);
+        case 4: return normalizedFromRange(float(gWaveCount), 4.0f, float(MAX_WAVES));
+        default: return 0.0f;
+    }
+}
+
+static std::string currentSliderValueText(int sliderIndex)
+{
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(2);
+    switch (sliderIndex) {
+        case 0: out << gAmplitudeScale; break;
+        case 1: out << gSteepnessScale; break;
+        case 2: out << gWindAngleRad; break;
+        case 3: out << gSunIntensity; break;
+        case 4: out.str(""); out.clear(); out << gWaveCount; break;
+        default: break;
+    }
+    return out.str();
+}
 
 static float deepWaterPhaseSpeed(float wavelength)
 {
@@ -157,13 +305,29 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int 
 {
     (void)mods;
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
-        dragging = (action == GLFW_PRESS);
         glfwGetCursorPos(window, &lastMouseX, &lastMouseY);
+        if (action == GLFW_PRESS) {
+            gActiveSlider = sliderIndexAtCursor(lastMouseX, lastMouseY);
+            dragging = (gActiveSlider < 0);
+            if (gActiveSlider >= 0) {
+                updateSliderValueFromCursor(gActiveSlider, lastMouseX);
+            }
+        } else {
+            dragging = false;
+            gActiveSlider = -1;
+        }
     }
 }
 
 static void cursorPosCallback(GLFWwindow* window, double x, double y)
 {
+    if (gActiveSlider >= 0) {
+        updateSliderValueFromCursor(gActiveSlider, x);
+        lastMouseX = x;
+        lastMouseY = y;
+        return;
+    }
+
     if (!dragging) return;
 
     double dx = x - lastMouseX;
@@ -194,6 +358,20 @@ void initOcean(GLFWwindow* window, CommandLineOptions options)
     shader = new Gloom::Shader();
     shader->makeBasicShader("../res/shaders/ocean.vert", "../res/shaders/ocean.frag");
     shader->activate();
+
+    guiShader = new Gloom::Shader();
+    guiShader->makeBasicShader("../res/shaders/gui.vert", "../res/shaders/gui.frag");
+
+    glGenVertexArrays(1, &guiVAO);
+    glGenBuffers(1, &guiVBO);
+    glBindVertexArray(guiVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, guiVBO);
+    glBufferData(GL_ARRAY_BUFFER, 1024 * sizeof(GuiVertex), nullptr, GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(GuiVertex), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(GuiVertex), (void*)(2 * sizeof(float)));
+    glBindVertexArray(0);
 
     // Grid mesh
     Mesh grid = makeGrid(/*n=*/gResolution, /*size=*/gOceanSize);
@@ -375,4 +553,56 @@ void renderOcean(GLFWwindow* window)
     if (gWireframe) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glDrawElements(GL_TRIANGLES, oceanIndexCount, GL_UNSIGNED_INT, nullptr);
     if (gWireframe) glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+}
+
+void renderOceanGui(GLFWwindow* window)
+{
+    if (!guiShader || !guiVAO || !guiVBO) return;
+
+    int width = 0;
+    int height = 0;
+    glfwGetWindowSize(window, &width, &height);
+
+    std::vector<GuiVertex> vertices;
+    vertices.reserve(4096);
+
+    appendRect(vertices, GUI_PANEL_X, GUI_PANEL_Y, GUI_PANEL_W, GUI_PANEL_H, glm::vec4(0.05f, 0.08f, 0.11f, 0.78f));
+    appendRect(vertices, GUI_PANEL_X + 1.0f, GUI_PANEL_Y + 1.0f, GUI_PANEL_W - 2.0f, 26.0f, glm::vec4(0.13f, 0.22f, 0.28f, 0.92f));
+    appendEasyFontText(vertices, GUI_PANEL_X + 10.0f, GUI_PANEL_Y + 8.0f, "Ocean Controls", glm::vec4(0.95f, 0.97f, 1.0f, 1.0f));
+
+    const glm::vec4 sliderColors[GUI_SLIDER_COUNT] = {
+        {0.21f, 0.71f, 0.93f, 1.0f},
+        {0.94f, 0.72f, 0.23f, 1.0f},
+        {0.57f, 0.80f, 0.39f, 1.0f},
+        {0.97f, 0.56f, 0.30f, 1.0f},
+        {0.82f, 0.45f, 0.89f, 1.0f}
+    };
+
+    for (int i = 0; i < GUI_SLIDER_COUNT; ++i) {
+        float rowTop = GUI_PANEL_Y + 36.0f + float(i) * GUI_ROW_H;
+        float sliderLeft = GUI_PANEL_X + GUI_SLIDER_X;
+        float t = currentSliderNormalized(i);
+        float fillWidth = GUI_SLIDER_W * t;
+
+        appendEasyFontText(vertices, GUI_PANEL_X + 10.0f, rowTop + 3.0f, guiSliderLabel(i), glm::vec4(0.90f, 0.93f, 0.96f, 1.0f));
+        appendEasyFontText(vertices, GUI_PANEL_X + 222.0f, rowTop + 3.0f, currentSliderValueText(i), glm::vec4(0.80f, 0.86f, 0.90f, 1.0f));
+        appendRect(vertices, sliderLeft, rowTop + 16.0f, GUI_SLIDER_W, 6.0f, glm::vec4(0.14f, 0.18f, 0.22f, 0.95f));
+        appendRect(vertices, sliderLeft, rowTop + 16.0f, fillWidth, 6.0f, sliderColors[i]);
+        appendRect(vertices, sliderLeft + fillWidth - 4.0f, rowTop + 13.0f, 8.0f, 12.0f, glm::vec4(0.98f, 0.99f, 1.0f, 1.0f));
+    }
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+
+    guiShader->activate();
+    glUniform2f(0, float(width), float(height));
+
+    glBindVertexArray(guiVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, guiVBO);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(GuiVertex), vertices.data(), GL_DYNAMIC_DRAW);
+    glDrawArrays(GL_TRIANGLES, 0, GLsizei(vertices.size()));
+    glBindVertexArray(0);
+
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
 }
