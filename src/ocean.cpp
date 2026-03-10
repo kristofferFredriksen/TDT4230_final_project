@@ -37,6 +37,9 @@ static double lastMouseY = 0.0;
 static bool gWireframe = true;
 static bool gPauseTime = false;
 
+static glm::mat4 gLastView(1.0f);
+static glm::mat4 gLastProj(1.0f);
+
 // --------------------
 // Input helper
 // --------------------
@@ -50,6 +53,30 @@ static bool keyPressed(GLFWwindow* window, int key)
     prev[key] = down;
     return pressed;
 }
+
+struct WaveParams {
+    glm::vec2 directionXZ;  // normalized
+    float amplitude;
+    float wavelength;
+    float speed;
+    float steepness;
+};
+
+static std::vector<WaveParams> gWaves = {
+    // Swell waves: long wavelength, larger amplitude, similar direction
+    { glm::normalize(glm::vec2( 1.0f,  0.2f)), 1.2f, 40.0f, 1.0f, 0.55f },
+    { glm::normalize(glm::vec2( 1.0f,  0.2f)), 0.7f, 22.0f, 1.3f, 0.40f },
+    { glm::normalize(glm::vec2( 0.9f,  0.35f)), 0.4f, 14.0f, 1.7f, 0.30f },
+};
+
+static constexpr int MAX_WAVES = 24;
+static constexpr int SWELL_WAVES = 3;
+
+static int gWaveCount = MAX_WAVES; // or 8
+static float gAmplitudeScale  = 1.0f;
+static float gSteepnessScale  = 1.0f;
+static float gWindAngleRad    = 0.0f;  // rotates all directions
+static int   gDebugMode       = 0;     // 0 shaded, 1 normals (optional)
 
 // --------------------
 // Grid generator (XZ plane)
@@ -142,7 +169,7 @@ void initOcean(GLFWwindow* window, CommandLineOptions options)
     shader->activate();
 
     // Grid mesh
-    Mesh grid = makeGrid(/*n=*/256, /*size=*/300.0f);
+    Mesh grid = makeGrid(/*n=*/2048, /*size=*/300.0f);
     oceanVAO = generateBuffer(grid);
     oceanIndexCount = int(grid.indices.size());
 
@@ -158,7 +185,11 @@ void updateOcean(GLFWwindow* window)
     if (keyPressed(window, GLFW_KEY_F1)) {
         gWireframe = !gWireframe;
         std::cout << "[F1] Wireframe: " << (gWireframe ? "ON" : "OFF") << std::endl;
+    }
 
+    if (keyPressed(window, GLFW_KEY_F2)) {
+        gDebugMode = (gDebugMode + 1) % 4;
+        std::cout << "DebugMode " << gDebugMode << "\n";
     }
 
     // Toggle pause
@@ -176,6 +207,25 @@ void updateOcean(GLFWwindow* window)
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) camRadius += 40.0f * dt;
     camRadius = glm::clamp(camRadius, 10.0f, 400.0f);
 
+    // Interactivity: press once per tap
+    if (keyPressed(window, GLFW_KEY_UP))    { gAmplitudeScale *= 1.1f; std::cout << "AmplitudeScale " << gAmplitudeScale << "\n"; }
+    if (keyPressed(window, GLFW_KEY_DOWN))  { gAmplitudeScale /= 1.1f; std::cout << "AmplitudeScale " << gAmplitudeScale << "\n"; }
+
+    if (keyPressed(window, GLFW_KEY_RIGHT)) { gSteepnessScale *= 1.1f; std::cout << "SteepnessScale " << gSteepnessScale << "\n"; }
+    if (keyPressed(window, GLFW_KEY_LEFT))  { gSteepnessScale /= 1.1f; std::cout << "SteepnessScale " << gSteepnessScale << "\n"; }
+
+    if (keyPressed(window, GLFW_KEY_PAGE_UP)) {
+        gWaveCount = std::min(gWaveCount + 1, MAX_WAVES);
+        std::cout << "WaveCount " << gWaveCount << "\n";
+    }
+    if (keyPressed(window, GLFW_KEY_PAGE_DOWN)) {
+        gWaveCount = std::max(gWaveCount - 1, 1);
+        std::cout << "WaveCount " << gWaveCount << "\n";
+    }
+
+    if (keyPressed(window, GLFW_KEY_COMMA)) { gWindAngleRad -= 0.1f; std::cout << "WindAngle " << gWindAngleRad << "\n"; }
+    if (keyPressed(window, GLFW_KEY_PERIOD)){ gWindAngleRad += 0.1f; std::cout << "WindAngle " << gWindAngleRad << "\n"; }
+
     // Camera orbit calculation
     glm::vec3 target(0.0f, 0.0f, 0.0f);
     glm::vec3 camPos;
@@ -191,11 +241,19 @@ void updateOcean(GLFWwindow* window)
 
     glm::mat4 proj = glm::perspective(glm::radians(55.0f), aspect, 0.1f, 1000.0f);
 
+    gLastView = view;
+    gLastProj = proj;
+
     // Send uniforms (do NOT rely on fixed locations like 3)
     shader->activate();
 
+    GLint locSky = glGetUniformLocation(shader->get(), "uSkybox");
+    glUniform1i(locSky, 0);
+
+    glUniform1i(400, gDebugMode);
+
     // GLint locTime = glGetUniformLocation(shader->getProgramID(), "uTime");
-    // GLint locView = glGetUniformLocation(shader->getProgramID(), "uView");
+    // GLint locView = gstatic int gWaveCount = MAX_WAVES; // or 8lGetUniformLocation(shader->getProgramID(), "uView");
     // GLint locProj = glGetUniformLocation(shader->getProgramID(), "uProj");
     // GLint locCam  = glGetUniformLocation(shader->getProgramID(), "uCameraPos");
 
@@ -210,7 +268,49 @@ void updateOcean(GLFWwindow* window)
     // if (locCam  >= 0) glUniform3fv(locCam, 1, glm::value_ptr(camPos));
 
     // Later: set wave arrays here (amplitude, dir, wavelength, speed, steepness)
+    glUniform1i(4, gWaveCount);
+    glUniform1f(5, gAmplitudeScale);
+    glUniform1f(6, gSteepnessScale);
+    glUniform1f(7, gWindAngleRad);
+
+    // Pack into arrays
+    glm::vec4 dirAmp[MAX_WAVES];
+    glm::vec3 lenSpeed[MAX_WAVES];
+
+    for (int i = 0; i < MAX_WAVES; i++) {
+        if (i < SWELL_WAVES && i < (int)gWaves.size()) {
+            // Swell waves (hand-tuned)
+            dirAmp[i]   = glm::vec4(gWaves[i].directionXZ.x, gWaves[i].directionXZ.y,
+                                    gWaves[i].amplitude, gWaves[i].steepness);
+            lenSpeed[i] = glm::vec3(gWaves[i].wavelength, gWaves[i].speed, 0.0f);
+        } else {
+            // Procedural detail waves (ripples)
+            float idx = float(i - SWELL_WAVES + 1);
+            float spread = 0.35f;                     // direction spread around wind
+            float angle = gWindAngleRad + spread * (idx - 4.0f);
+
+            glm::vec2 dir = glm::normalize(glm::vec2(std::cos(angle), std::sin(angle)));
+
+            // Shorter wavelengths and smaller amplitudes than swell
+            float wavelength = 30.0f / (0.7f * idx + 1.0f) + 2.0f;   // ~32 .. ~2.7
+            float amplitude  = 0.25f / sqrt(idx);                    // slower decay
+            amplitude = std::max(amplitude, 0.03f);                  // keep some energy
+            float steepness  = 0.18f / sqrt(idx);                    // slower decay, but clamp to avoid instability
+            steepness = std::min(steepness, 0.4f);                                          
+            float speed      = 2.0f + 0.25f * idx;     // simple model
+            // float steepness  = 0.25f / (idx * 1.1f);   // decays with idx
+
+            dirAmp[i]   = glm::vec4(dir.x, dir.y, amplitude, steepness);
+            lenSpeed[i] = glm::vec3(wavelength, speed, 0.0f);
+        }
+    }
+
+    glUniform4fv(8,  MAX_WAVES, glm::value_ptr(dirAmp[0]));
+    glUniform3fv(72, MAX_WAVES, glm::value_ptr(lenSpeed[0]));
 }
+
+const glm::mat4& getOceanView() { return gLastView; }
+const glm::mat4& getOceanProj() { return gLastProj; }
 
 void renderOcean(GLFWwindow* window)
 {
@@ -218,7 +318,7 @@ void renderOcean(GLFWwindow* window)
     glfwGetWindowSize(window, &w, &h);
     glViewport(0, 0, w, h);
 
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    // glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     shader->activate();
     glBindVertexArray(oceanVAO);

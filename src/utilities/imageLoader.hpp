@@ -10,4 +10,4 @@ typedef struct PNGImage {
 	std::vector<unsigned char> pixels;
 } PNGImage;
 
-PNGImage loadPNGFile(std::string fileName);
+PNGImage loadPNGFile(std::string fileName, bool flipVertically = false);
