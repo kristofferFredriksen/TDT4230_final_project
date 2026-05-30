@@ -4,6 +4,10 @@ Real-time ocean surface renderer built in C++ and OpenGL for TDT4230: Graphics a
 
 The project uses Gerstner waves as the primary geometric wave model and combines them with a physically inspired water shader, skybox-based reflections, edge fog, and bloom to produce a stylized but dynamic open-ocean scene.
 
+## Demo
+
+<video src="Water_color.mov" controls width="100%"></video> 
+
 ## Features
 
 - Multi-wave Gerstner displacement in the vertex shader
