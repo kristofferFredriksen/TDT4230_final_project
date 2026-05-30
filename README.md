@@ -6,7 +6,7 @@ The project uses Gerstner waves as the primary geometric wave model and combines
 
 ## Demo
 
-<video src="Water_color.mp4" controls width="100%"></video> 
+<video src="https://github.com/user-attachments/assets/4ca611ae-e288-4d37-8a4c-4e218ce30ae7" controls width="100%"></video> 
 
 ## Features
 
